@@ -1,0 +1,8 @@
+﻿# Local diagnostic reports may contain personal information.
+WindowsRepair-Sessions/
+WindowsRepair-Bericht-*/
+WindowsRepair.log
+WindowsUpdate.log
+SFC-CBS-Auszug.txt
+Zusammenfassung.txt
+Ergebnisse.json
