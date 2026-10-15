@@ -6,14 +6,14 @@
   Presets, freie Mehrfachauswahl, Sicherheitsabfragen und exportierbare Sitzungslogs.
   Ausschliesslich integrierte Windows-Befehle; keine Downloads und keine Fremdmodule.
   Die Ausfuehrung erfolgt in der Windows PowerShell 5.1 (64-Bit empfohlen).
-  Version 1.0, 2026-10-14.
+  Version 1.0.1, 2026-10-16.
 .NOTES
   Riskante Boot-/Partitionsoperationen werden absichtlich NICHT automatisiert.
   Bei einem Fehler wird der jeweilige Schritt protokolliert; der Rest laeuft weiter.
 #>
 
 $ErrorActionPreference = 'Stop'
-$script:Version = '1.0.0'
+$script:Version = '1.0.1'
 
 if ($env:OS -ne 'Windows_NT') {
     Write-Host 'Dieses Tool funktioniert ausschliesslich unter Windows.' -ForegroundColor Red
@@ -103,23 +103,57 @@ function Invoke-External {
     param(
         [Parameter(Mandatory = $true)][string]$File,
         [string[]]$Arguments = @(),
-        [switch]$AllowNonZero
+        [switch]$AllowNonZero,
+        [System.Text.Encoding]$OutputEncoding
     )
     $exe = Get-Command -Name $File -CommandType Application -ErrorAction Stop
     Write-Log ('Befehl: {0} {1}' -f $File, ($Arguments -join ' ')) 'RUN'
-    # Native stderr als Ausgabe abfangen, ohne dass PowerShell 5.1 daraus
-    # aufgrund der globalen ErrorActionPreference eine terminating exception macht.
-    $ErrorActionPreference = 'Continue'
-    $global:LASTEXITCODE = 0
-    & $exe.Source @Arguments 2>&1 | ForEach-Object {
-        $string = $_.ToString()
-        foreach ($line in ($string -split '\r?\n')) {
-            if (-not [string]::IsNullOrWhiteSpace($line)) {
-                Write-Log $line.TrimEnd() 'OUT'
-            }
+    # Die Windows-Werkzeuge verwenden bei Umleitung verschiedene Codierungen.
+    # Explizit am Prozess setzen; die globale Konsolencodierung bleibt unveraendert.
+    if ($null -eq $OutputEncoding) {
+        $unicodeOutput = $exe.Name -ieq 'sfc.exe' -or
+            ($exe.Name -ieq 'cmd.exe' -and $Arguments -contains '/u')
+        $OutputEncoding = if ($unicodeOutput) { [System.Text.Encoding]::Unicode } elseif ($exe.Name -in @('chkdsk.exe','pnputil.exe')) {
+            [System.Text.Encoding]::Default
+        } elseif (
+            $exe.Name -in @('dism.exe','ipconfig.exe','reagentc.exe')
+        ) {
+            [System.Text.Encoding]::GetEncoding((Get-WinSystemLocale).TextInfo.OEMCodePage)
+        } else {
+            [Console]::OutputEncoding
         }
     }
-    $exit = $global:LASTEXITCODE
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo.FileName = $exe.Source
+    # Windows-Argumente: Anfuehrungszeichen und davorstehende bzw. abschliessende
+    # Backslashes escapen, damit insbesondere Quellpfade mit Leerzeichen ankommen.
+    $process.StartInfo.Arguments = (@(foreach ($argument in $Arguments) {
+        if ($argument.Length -gt 0 -and $argument -notmatch '[\s"]') { $argument } else {
+            '"' + (($argument -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+        }
+    }) -join ' ')
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    $process.StartInfo.StandardOutputEncoding = $OutputEncoding
+    $process.StartInfo.StandardErrorEncoding = $OutputEncoding
+    # stdin bleibt geerbt: native Rueckfragen (z.B. CHKDSK) bleiben bedienbar.
+    try {
+        [void]$process.Start()
+        # stderr parallel leeren, damit ein voller Fehlerkanal stdout nicht blockiert.
+        $errorOutput = $process.StandardError.ReadToEndAsync()
+        while ($null -ne ($line = $process.StandardOutput.ReadLine())) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { Write-Log $line.TrimEnd() 'OUT' }
+        }
+        foreach ($line in ($errorOutput.GetAwaiter().GetResult() -split '\r?\n')) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { Write-Log $line.TrimEnd() 'OUT' }
+        }
+        $process.WaitForExit()
+        $exit = $process.ExitCode
+        $global:LASTEXITCODE = $exit
+    } finally {
+        $process.Dispose()
+    }
     Write-Log ("Exitcode: {0}" -f $exit) 'INFO'
     if ($exit -ne 0 -and -not $AllowNonZero) {
         throw ('{0} endete mit Exitcode {1}. Details stehen im Sitzungslog.' -f $File, $exit)
@@ -734,19 +768,22 @@ try {
     Write-Host ''
     Write-Host '=== SITZUNGSENDE ===' -ForegroundColor Cyan
     try { Show-RunSummary } catch {}
-    $keep = $false
+    $preserveSession = $false
     try {
         if (Ask-YesNo 'Gesamtes Sitzungslog inklusive Debug-Bericht speichern?') {
-            $keep = Export-Session
+            $preserveSession = -not (Export-Session)
         }
-    } catch { Write-Host ("Log-Abfrage gescheitert: {0}" -f $_.Exception.Message) -ForegroundColor Red; $keep = $true }
+    } catch { Write-Host ("Log-Abfrage gescheitert: {0}" -f $_.Exception.Message) -ForegroundColor Red; $preserveSession = $true }
     try {
-        Write-Log 'WindowsRepair wird beendet.'
-        $script:LogWriter.Dispose()
-        Remove-Item -LiteralPath $script:SessionDir -Recurse -Force -ErrorAction Stop
-        if ($keep -or $script:ExportedPaths.Count -gt 0) {
-            Write-Host 'Gespeicherte Berichte liegen am ausgewaehlten Exportort.' -ForegroundColor Green
+        try { Write-Log 'WindowsRepair wird beendet.' } finally { $script:LogWriter.Dispose() }
+        if ($preserveSession) {
+            Write-Host ("Export nicht abgeschlossen. Sitzungsdaten erhalten unter: {0}" -f $script:SessionDir) -ForegroundColor Yellow
         } else {
+            Remove-Item -LiteralPath $script:SessionDir -Recurse -Force -ErrorAction Stop
+        }
+        if ($script:ExportedPaths.Count -gt 0) {
+            Write-Host 'Gespeicherte Berichte liegen am ausgewaehlten Exportort.' -ForegroundColor Green
+        } elseif (-not $preserveSession) {
             Write-Host 'Temporaere Sitzungsdaten entfernt. Keine dauerhaften Logs gespeichert.'
         }
     } catch {

@@ -2,7 +2,7 @@
 
 WindowsRepair bündelt Diagnose- und Reparaturbefehle für Windows 10 und 11 in einem interaktiven PowerShell-Menü. Du kannst ein Preset für ein bestimmtes Problem wählen oder einzelne Befehle kombinieren. Das Skript verwendet die Werkzeuge, die Windows mitbringt, darunter DISM, SFC und CHKDSK. Eine Installation oder zusätzliche PowerShell-Module brauchst du nicht.
 
-Version 1.0.0 ist bisher statisch geprüft, aber noch nicht auf einem laufenden Windows-System getestet. Probiere das Skript deshalb zuerst auf einem Testsystem aus.
+Version 1.0.1 behebt die beim Sandbox-Test gefundenen Fehler beim Berichtsexport und bei der Zeichencodierung von Befehlsausgaben. Die [Nachprüfung](tests/FIX-VERIFICATION.md) dokumentiert die Regressionstests. Der [ursprüngliche Testbericht](tests/TEST-REPORT.md) enthält die Ergebnisse aller 58 Aktionen und die Grenzen der Sandbox-Prüfung. Probiere das Skript vor produktiver Nutzung zuerst auf einem Testsystem aus.
 
 ## Starten
 
@@ -56,7 +56,7 @@ Ein Bericht enthält:
 - `Ergebnisse.json`: Ergebnisse zur maschinellen Weiterverarbeitung
 - `WindowsUpdate.log` und `SFC-CBS-Auszug.txt`, sofern die jeweiligen Aktionen ausgeführt wurden
 
-Beim normalen Beenden versucht das Tool, den temporären Sitzungsordner zu löschen. Exportierte Berichte bleiben erhalten. Nach einem Absturz oder abgebrochenen Lauf können temporäre Protokolle zurückbleiben.
+Nach einem erfolgreichen Export oder wenn du das Speichern ablehnst, versucht das Tool, den temporären Sitzungsordner zu löschen. Scheitert der gewünschte Export oder die abschließende Speicherabfrage, bleiben die Sitzungsdaten erhalten; das Programm zeigt ihren Pfad an. Exportierte Berichte bleiben erhalten. Nach einem Absturz oder abgebrochenen Lauf können ebenfalls temporäre Protokolle zurückbleiben.
 
 Prüfe Berichte vor dem Teilen. Sie können Benutzernamen, Rechnernamen, installierte Programme, IP-Adressen und lokale Pfade enthalten. Die `.gitignore` schließt die vom Tool erzeugten Berichtsordner und Berichtsdateien aus, falls sie im Projektordner abgelegt werden.
 

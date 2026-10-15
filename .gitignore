@@ -6,3 +6,6 @@ WindowsUpdate.log
 SFC-CBS-Auszug.txt
 Zusammenfassung.txt
 Ergebnisse.json
+
+# Raw sandbox test output stays local.
+/sandbox-results/
